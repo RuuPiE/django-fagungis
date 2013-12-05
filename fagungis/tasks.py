@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 from copy import copy
 from datetime import datetime
-from os.path import basename, abspath, dirname, isfile, join
+from os.path import basename, abspath, dirname, isfile, join, exists, isdir
 from fabric.api import env, puts, abort, cd, hide, task
 from fabric.operations import sudo, settings, run
 from fabric.contrib import console
 from fabric.contrib.files import upload_template
 
-from fabric.colors import _wrap_with, green
+from fabric.colors import _wrap_with, green, yellow
 
 green_bg = _wrap_with('42')
 red_bg = _wrap_with('41')
@@ -37,7 +37,7 @@ def setup():
     _install_dependencies()
     _create_django_user()
     _setup_directories()
-    _hg_clone()
+    _git_clone()
     _install_virtualenv()
     _create_virtualenv()
     _install_gunicorn()
@@ -66,7 +66,7 @@ def deploy():
     puts(green_bg('Start deploy...'))
     start_time = datetime.now()
 
-    hg_pull()
+    git_pull()
     _install_requirements()
     _upload_nginx_conf()
     _upload_rungunicorn_script()
@@ -80,11 +80,6 @@ def deploy():
     (green_bg(end_time.strftime('%H:%M:%S')), (end_time - start_time).seconds)
     puts(finish_message)
 
-
-@task
-def hg_pull():
-    with cd(env.code_root):
-        sudo('hg pull -u')
 
 
 @task
@@ -279,7 +274,7 @@ def _verify_sudo():
 
 def _install_nginx():
     # add nginx stable ppa
-    sudo("add-apt-repository ppa:nginx/stable")
+    #sudo("add-apt-repository ppa:nginx/stable")
     sudo("apt-get update")
     sudo("apt-get -y install nginx")
     sudo("/etc/init.d/nginx start")
@@ -293,6 +288,8 @@ def _install_dependencies():
         "build-essential",
         "python-pip",
         "supervisor",
+        "mysql-server",
+        "libmysqlclient-dev",
     ]
     sudo("apt-get update")
     sudo("apt-get -y install %s" % " ".join(packages))
@@ -357,8 +354,27 @@ def virtenvsudo(command):
     sudo(activate + ' && ' + command)
 
 
-def _hg_clone():
-    sudo('hg clone %s %s' % (env.repository, env.code_root))
+#def _hg_clone():
+#    sudo('hg clone %s %s' % (env.repository, env.code_root))
+#
+#@task
+#def hg_pull():
+#    with cd(env.code_root):
+#        sudo('hg pull -u')
+
+
+def _git_clone():
+    with cd(env.projects_path):
+        if not isdir(env.project):
+            sudo('git clone %s' % env.repository, user=env.django_user)
+        else:
+            _wrap_with(yellow)('Django source dir already exists. Not cloning repo!')
+
+
+@task
+def git_pull():
+    with cd(env.code_root):
+        sudo('git pull', user=env.django_user)
 
 
 def _test_nginx_conf():
