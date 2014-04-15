@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import os
 from copy import copy
 from datetime import datetime
-from os.path import basename, abspath, dirname, isfile, join, exists, isdir
+from os.path import basename, abspath, dirname, isfile, join
 from fabric.api import env, puts, abort, cd, hide, task
 from fabric.operations import sudo, settings, run
 from fabric.contrib import console
-from fabric.contrib.files import upload_template
+from fabric.contrib.files import upload_template, exists
 
 from fabric.colors import _wrap_with, green, yellow
 
@@ -71,6 +72,34 @@ def deploy():
     _upload_nginx_conf()
     _upload_rungunicorn_script()
     _upload_supervisord_conf()
+    _prepare_django_project()
+    _prepare_media_path()
+    _supervisor_restart()
+
+    end_time = datetime.now()
+    finish_message = '[%s] Correctly deployed in %i seconds' % \
+    (green_bg(end_time.strftime('%H:%M:%S')), (end_time - start_time).seconds)
+    puts(finish_message)
+
+@task
+def update():
+    #  test configuration start
+    if not test_configuration():
+        if not console.confirm("Configuration test %s! Do you want to continue?" % red_bg('failed'), default=False):
+            abort("Aborting at user request.")
+    #  test configuration end
+    _verify_sudo()
+    if env.ask_confirmation:
+        if not console.confirm("Are you sure you want to deploy in %s?" % red_bg(env.project.upper()), default=False):
+            abort("Aborting at user request.")
+    puts(green_bg('Start deploy...'))
+    start_time = datetime.now()
+
+    git_pull()
+    # _install_requirements()
+    # _upload_nginx_conf()
+    # _upload_rungunicorn_script()
+    # _upload_supervisord_conf()
     _prepare_django_project()
     _prepare_media_path()
     _supervisor_restart()
@@ -290,6 +319,8 @@ def _install_dependencies():
         "supervisor",
         "mysql-server",
         "libmysqlclient-dev",
+        "git-core",
+        "vim",
     ]
     sudo("apt-get update")
     sudo("apt-get -y install %s" % " ".join(packages))
@@ -302,25 +333,26 @@ def _install_dependencies():
 def _install_requirements():
     ''' you must have a file called requirements.txt in your project root'''
     if 'requirements_file' in env and env.requirements_file:
-        virtenvsudo('pip install -r %s' % env.requirements_file)
+        virtenvsudo('pip install -r %s' % env.requirements_file, user=env.django_user)
 
 
 def _install_gunicorn():
     """ force gunicorn installation into your virtualenv, even if it's installed globally.
     for more details: https://github.com/benoitc/gunicorn/pull/280 """
-    virtenvsudo('pip install -I gunicorn')
+    virtenvsudo('pip install -I gunicorn', user=env.django_user)
 
 
 def _install_virtualenv():
     sudo('pip install virtualenv')
+    sudo('pip install virtualenv')
 
 
 def _create_virtualenv():
-    sudo('virtualenv --%s %s' % (' --'.join(env.virtenv_options), env.virtenv))
+    sudo('virtualenv --%s %s' % (' --'.join(env.virtenv_options), env.virtenv), user=env.django_user)
 
 
 def _setup_directories():
-    sudo('mkdir -p %(projects_path)s' % env)
+    sudo('mkdir -p %(projects_path)s' % env, user=env.django_user)
     # sudo('mkdir -p %(django_user_home)s/logs/nginx' % env)  # Not used
     # prepare gunicorn_logfile
     sudo('mkdir -p %s' % dirname(env.gunicorn_logfile))
@@ -339,19 +371,21 @@ def _setup_directories():
     sudo('mkdir -p %s' % dirname(env.supervisord_conf_file))
     sudo('mkdir -p %s' % dirname(env.rungunicorn_script))
     # sudo('mkdir -p %(django_user_home)s/tmp' % env)  # Not used
-    sudo('mkdir -p %(virtenv)s' % env)
+    sudo('mkdir -p %(virtenv)s' % env, user=env.django_user)
     sudo('mkdir -p %(nginx_htdocs)s' % env)
     sudo('echo "<html><body>nothing here</body></html> " > %(nginx_htdocs)s/index.html' % env)
 
 
-def virtenvrun(command):
+def virtenvrun(command, django_user=False):
+    if django_user:
+        virtenvsudo(command, user=env.django_user)
     activate = 'source %s/bin/activate' % env.virtenv
     run(activate + ' && ' + command)
 
 
-def virtenvsudo(command):
+def virtenvsudo(command, user=None):
     activate = 'source %s/bin/activate' % env.virtenv
-    sudo(activate + ' && ' + command)
+    sudo(activate + ' && ' + command, user=user)
 
 
 #def _hg_clone():
@@ -362,11 +396,11 @@ def virtenvsudo(command):
 #    with cd(env.code_root):
 #        sudo('hg pull -u')
 
-
 def _git_clone():
     with cd(env.projects_path):
-        if not isdir(env.project):
+        if not exists(join(env.code_root, '.git')):
             sudo('git clone %s' % env.repository, user=env.django_user)
+            # pass
         else:
             _wrap_with(yellow)('Django source dir already exists. Not cloning repo!')
 
@@ -374,7 +408,7 @@ def _git_clone():
 @task
 def git_pull():
     with cd(env.code_root):
-        sudo('git pull', user=env.django_user)
+        sudo('git pull --no-commit', user=env.django_user)
 
 
 def _test_nginx_conf():
