@@ -11,6 +11,8 @@ from fabric.contrib.files import upload_template, exists
 
 from fabric.colors import _wrap_with, green, yellow
 
+from settings import INSTALLED_APPS
+
 green_bg = _wrap_with('42')
 red_bg = _wrap_with('41')
 fagungis_path = dirname(abspath(__file__))
@@ -67,7 +69,9 @@ def deploy():
     puts(green_bg('Start deploy...'))
     start_time = datetime.now()
 
-    git_pull()
+    if not 'synced_projectdir' in env or not env.synced_projectdir:
+        git_pull()
+
     _install_requirements()
     _upload_nginx_conf()
     _upload_rungunicorn_script()
@@ -95,7 +99,8 @@ def update():
     puts(green_bg('Start deploy...'))
     start_time = datetime.now()
 
-    git_pull()
+    if not 'synced_projectdir' in env or not env.synced_projectdir:
+        git_pull()
     # _install_requirements()
     # _upload_nginx_conf()
     # _upload_rungunicorn_script()
@@ -462,6 +467,8 @@ def _prepare_django_project():
         if env.south_used:
             virtenvrun('./manage.py migrate --noinput --verbosity=1')
         virtenvsudo('./manage.py collectstatic --noinput')
+        if 'reversion' in INSTALLED_APPS:
+            virtenvsudo('./manage.py createinitialrevisions')
 
 
 def _prepare_media_path():
